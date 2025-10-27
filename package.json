@@ -1,6 +1,6 @@
 {
   "name": "@macielcr7/chat-notifier",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Biblioteca TypeScript genérica para notificações padronizadas no Google Chat",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
