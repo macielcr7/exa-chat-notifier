@@ -1,0 +1,192 @@
+import { HttpClient } from '../../src/http-client';
+
+// Mock node-fetch
+jest.mock('node-fetch', () => jest.fn());
+
+import fetch from 'node-fetch';
+const mockFetch = fetch as jest.MockedFunction<typeof fetch>;
+
+describe('HttpClient', () => {
+  const TEST_URL = 'https://chat.googleapis.com/v1/spaces/test/messages';
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  describe('post', () => {
+    it('should send POST request with JSON body', async () => {
+      const data = { text: 'Hello' };
+      const responseBody = { name: 'spaces/test/messages/123' };
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => JSON.stringify(responseBody),
+      });
+
+      const client = new HttpClient();
+      const response = await client.post(TEST_URL, data);
+
+      expect(response.ok).toBe(true);
+      expect(response.status).toBe(200);
+      expect(mockFetch).toHaveBeenCalledWith(
+        TEST_URL,
+        expect.objectContaining({
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json; charset=UTF-8',
+          },
+          body: JSON.stringify(data),
+        }),
+      );
+    });
+
+    it('should return response body', async () => {
+      const responseBody = { name: 'spaces/test/messages/123' };
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => JSON.stringify(responseBody),
+      });
+
+      const client = new HttpClient();
+      const response = await client.post(TEST_URL, {});
+
+      expect(response.body).toBe(JSON.stringify(responseBody));
+    });
+
+    it('should handle non-200 responses', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: async () => JSON.stringify({ error: 'Bad Request' }),
+      });
+
+      const client = new HttpClient();
+      const response = await client.post(TEST_URL, {});
+
+      expect(response.ok).toBe(false);
+      expect(response.status).toBe(400);
+    });
+  });
+
+  describe('retry logic', () => {
+    it('should retry on 429 rate limit', async () => {
+      let attempts = 0;
+
+      mockFetch.mockImplementation(() => {
+        attempts++;
+        if (attempts <= 2) {
+          return Promise.resolve({
+            ok: false,
+            status: 429,
+            statusText: 'Too Many Requests',
+            text: async () => JSON.stringify({ error: 'Rate limited' }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: async () => '{}',
+        });
+      });
+
+      const client = new HttpClient({ initialDelayMs: 10, maxRetries: 3 });
+      const response = await client.post(TEST_URL, {});
+
+      expect(response.ok).toBe(true);
+      expect(attempts).toBe(3);
+    });
+
+    it('should retry on 500 server error', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          statusText: 'Internal Server Error',
+          text: async () => 'Server Error',
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: async () => '{}',
+        });
+
+      const client = new HttpClient({ initialDelayMs: 10, maxRetries: 3 });
+      const response = await client.post(TEST_URL, {});
+
+      expect(response.ok).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('should not retry on 400 bad request', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        text: async () => 'Bad Request',
+      });
+
+      const client = new HttpClient({ maxRetries: 3 });
+      const response = await client.post(TEST_URL, {});
+
+      expect(response.ok).toBe(false);
+      expect(response.status).toBe(400);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw after max retries', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 429,
+        statusText: 'Too Many Requests',
+        text: async () => '{}',
+      });
+
+      const client = new HttpClient({ initialDelayMs: 10, maxRetries: 3 });
+
+      await expect(client.post(TEST_URL, {})).rejects.toThrow(
+        'Failed after 4 attempts',
+      );
+    });
+  });
+
+  describe('timeout', () => {
+    it('should timeout long requests', async () => {
+      mockFetch.mockImplementation(() => {
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            resolve({
+              ok: true,
+              status: 200,
+              statusText: 'OK',
+              text: async () => '{}',
+            });
+          }, 200);
+        });
+      });
+
+      const client = new HttpClient({ timeoutMs: 50, maxRetries: 0 });
+
+      await expect(client.post(TEST_URL, {})).rejects.toThrow();
+    });
+  });
+
+  describe('network errors', () => {
+    it('should throw on network error after retries', async () => {
+      mockFetch.mockRejectedValue(new Error('Network error'));
+
+      const client = new HttpClient({ initialDelayMs: 10, maxRetries: 3 });
+
+      await expect(client.post(TEST_URL, {})).rejects.toThrow(
+        'Failed after 4 attempts',
+      );
+    });
+  });
+});
