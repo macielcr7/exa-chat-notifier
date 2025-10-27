@@ -91,6 +91,7 @@ export class TombamentoSchema implements EventSchema<TombamentoPayload, Tombamen
     if (counts.valid !== undefined) parts.push(`valid: ${counts.valid}`);
     if (counts.invalid !== undefined) parts.push(`invalid: ${counts.invalid}`);
     if (counts.processed !== undefined) parts.push(`processed: ${counts.processed}`);
+    if (counts.error !== undefined) parts.push(`error: ${counts.error}`);
 
     return {
       textParagraph: {

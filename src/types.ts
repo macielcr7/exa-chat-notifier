@@ -111,6 +111,7 @@ export interface TombamentoPayload {
     valid?: number;
     invalid?: number;
     processed?: number;
+    error?: number;
   };
   /** Mensagem adicional */
   message?: string;
